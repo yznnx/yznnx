@@ -3,6 +3,8 @@ import { Camera, ChevronDown, ChevronRight, ExternalLink, Sparkles, Square, Star
 import { all, bumpActivity, get, remove, update, useStore } from "../lib/store";
 import { addTasks, parseTaskSpec } from "../lib/library";
 import { aiReady, checkSolution, friendlyError, type StreamHandle } from "../lib/ai";
+import { buildCheckPrompt, parseScore10 } from "../lib/bridge";
+import { ClaudeGrader } from "../components/ClaudeBridge";
 import { Empty, ImageThumbs, Markdown, MarkdownEditor, useImagePicker } from "../components/ui";
 import { navigate, useRoute } from "../lib/router";
 import type { Task, TaskStatus } from "../lib/types";
@@ -178,21 +180,24 @@ function TaskWork({ task, onGraded }: { task: Task; onGraded?: () => void }) {
   }, [task.id]);
   useEffect(() => () => stream?.abort(), [stream]);
 
+  /** "Score: 9/10" → status. */
+  const applyScore = (out: string) => {
+    const score = parseScore10(out);
+    if (score !== null) {
+      const status: TaskStatus = score >= 9 ? "solved" : score >= 5 ? "review" : "attempted";
+      setTaskStatus(task, status);
+      if (score >= 9 && task.confidence < 4) update("task", task.id, { confidence: 4 });
+    }
+    onGraded?.();
+  };
+
   const check = async () => {
     update("task", task.id, { solution: text });
     setFeedback("");
     try {
       const h = await checkSolution(task, sheet, { text, images: pics.images }, setFeedback);
       setStream(h);
-      const out = await h.done;
-      const m = out.match(/Score:\s*([\d.]+)\s*\/\s*10/i);
-      const score = m ? Number(m[1]) : null;
-      if (score !== null) {
-        const status: TaskStatus = score >= 9 ? "solved" : score >= 5 ? "review" : "attempted";
-        setTaskStatus(task, status);
-        if (score >= 9 && task.confidence < 4) update("task", task.id, { confidence: 4 });
-      }
-      onGraded?.();
+      applyScore(await h.done);
     } catch (e) {
       setFeedback((f) => f + `\n\n> ⚠️ ${friendlyError(e)}`);
     } finally {
@@ -255,8 +260,21 @@ function TaskWork({ task, onGraded }: { task: Task; onGraded?: () => void }) {
               <Sparkles size={15} /> Check strictly
             </button>
           ))}
-        {!aiReady() && <span className="tiny muted">Add an API key in Settings to get your solutions checked.</span>}
       </div>
+      {!aiReady() && (
+        <ClaudeGrader
+          label="Check strictly with Claude (no API key)"
+          hint={pics.images.length ? "Also attach your photos in the Claude chat." : undefined}
+          buildPrompt={() => {
+            update("task", task.id, { solution: text });
+            return buildCheckPrompt(task, text, pics.images.length > 0);
+          }}
+          onImport={(reply) => {
+            setFeedback(reply.trim());
+            applyScore(reply);
+          }}
+        />
+      )}
       {feedback && (
         <div className="card" style={{ padding: 14 }}>
           <Markdown text={feedback} />

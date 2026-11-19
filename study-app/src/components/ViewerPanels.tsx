@@ -1,24 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Plus, Sparkles, Square, Trash2 } from "lucide-react";
-import { all, get, put, putMany, remove, useStore } from "../lib/store";
+import { all, get, put, remove, useStore } from "../lib/store";
 import { addTasks, makeCard, parseTaskSpec } from "../lib/library";
-import {
-  aiReady,
-  explainPage,
-  friendlyError,
-  generateCards,
-  generateProblems,
-  generateQuiz,
-  needsVisual,
-  type GeneratedCard,
-  type GeneratedProblem,
-  type GeneratedQuestion,
-  type StreamHandle,
-} from "../lib/ai";
-import { Markdown, MarkdownEditor, TierBadge, toast } from "./ui";
-import type { Material, Note, Problem, QuizQuestion, TaskStatus } from "../lib/types";
+import { aiReady, explainPage, friendlyError, generateCards, generateProblems, generateQuiz, needsVisual, type StreamHandle } from "../lib/ai";
+import { GeneratedPreview, keepAll, type Generated } from "./Generated";
+import { ClaudeBridgePanel } from "./ClaudeBridge";
+import { Markdown, MarkdownEditor, toast } from "./ui";
+import type { Material, Note, TaskStatus } from "../lib/types";
 import { tierOf, TIER_VALUE } from "../lib/importance";
-import { plural, uid } from "../lib/util";
+import { uid } from "../lib/util";
 import { STATUS_LABEL, StatusPicker, setTaskStatus } from "../pages/ExercisesPage";
 
 type Draft = { text: string; n: number };
@@ -205,9 +195,8 @@ export function AiPanel({ material, page, draft }: { material: Material; page: n
   const [count, setCount] = useState(10);
   const [visual, setVisual] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const [cards, setCards] = useState<(GeneratedCard & { keep: boolean })[] | null>(null);
-  const [quiz, setQuiz] = useState<(GeneratedQuestion & { keep: boolean })[] | null>(null);
-  const [problems, setProblems] = useState<(GeneratedProblem & { keep: boolean })[] | null>(null);
+  const [gen, setGen] = useState<Generated | null>(null);
+  const [bridge, setBridge] = useState(false);
 
   useEffect(() => {
     if (draft) setQuestion(`Explain this: "${draft.text.slice(0, 600)}"`);
@@ -218,14 +207,11 @@ export function AiPanel({ material, page, draft }: { material: Material; page: n
   if (!aiReady()) {
     return (
       <div className="stack">
-        <h3 style={{ margin: 0 }}>AI tutor (optional)</h3>
-        <p className="small muted">
-          With your own Anthropic API key the tutor can explain slides, create ETH-level flashcards, quiz questions and exam problems from your material, and check your
-          solutions strictly. Your files only leave the device when you press an AI button.
+        <ClaudeBridgePanel material={material} page={page} />
+        <hr />
+        <p className="tiny muted" style={{ margin: 0 }}>
+          Want it in one click instead of copy & paste (explanations, chat, automatic grading)? Add an Anthropic API key in <a href="#/settings">Settings</a>.
         </p>
-        <a className="btn primary" href="#/settings">
-          Set up in Settings
-        </a>
       </div>
     );
   }
@@ -248,70 +234,18 @@ export function AiPanel({ material, page, draft }: { material: Material; page: n
     }
   };
 
-  const gen = async (what: "cards" | "quiz" | "problems") => {
+  const generate = async (what: "cards" | "quiz" | "problems") => {
     setBusy(what);
     try {
       const sc = { material, pages: scopePages, visual: visual || undefined };
-      if (what === "cards") setCards((await generateCards(sc, { count, focus: scope === "all" ? "all" : "important", importantPages })).map((c) => ({ ...c, keep: true })));
-      if (what === "quiz") setQuiz((await generateQuiz(sc, { count, importantPages: scope === "all" ? importantPages : undefined })).map((q) => ({ ...q, keep: true })));
-      if (what === "problems") setProblems((await generateProblems(sc, { count: Math.max(1, Math.min(5, Math.round(count / 4))), importantPages })).map((p) => ({ ...p, keep: true })));
+      if (what === "cards") setGen({ kind: "cards", items: keepAll(await generateCards(sc, { count, focus: scope === "all" ? "all" : "important", importantPages })) });
+      if (what === "quiz") setGen({ kind: "quiz", items: keepAll(await generateQuiz(sc, { count, importantPages: scope === "all" ? importantPages : undefined })) });
+      if (what === "problems") setGen({ kind: "problems", items: keepAll(await generateProblems(sc, { count: Math.max(1, Math.min(5, Math.round(count / 4))), importantPages })) });
     } catch (e) {
       toast(friendlyError(e), true);
     } finally {
       setBusy(null);
     }
-  };
-
-  const saveCards = () => {
-    const keep = (cards ?? []).filter((c) => c.keep);
-    putMany(
-      "card",
-      keep.map((c) => makeCard(material.courseId, c.front, c.back, material.id, c.page >= 1 && c.page <= material.pageCount ? c.page : undefined)),
-    );
-    toast(`Added ${keep.length} flashcards.`);
-    setCards(null);
-  };
-
-  const saveQuiz = () => {
-    const keep = (quiz ?? []).filter((q) => q.keep);
-    const items: QuizQuestion[] = keep.map((q) => ({
-      id: uid(),
-      courseId: material.courseId,
-      materialId: material.id,
-      page: q.page >= 1 && q.page <= material.pageCount ? q.page : undefined,
-      type: q.type,
-      question: q.question,
-      options: q.options,
-      correct: q.correct,
-      explanation: q.explanation,
-      createdAt: Date.now(),
-      seen: 0,
-      right: 0,
-    }));
-    putMany("quiz", items);
-    toast(`Added ${items.length} quiz questions.`);
-    setQuiz(null);
-  };
-
-  const saveProblems = () => {
-    const keep = (problems ?? []).filter((p) => p.keep);
-    const items: Problem[] = keep.map((p) => ({
-      id: uid(),
-      courseId: material.courseId,
-      materialId: material.id,
-      pages: p.pages.filter((x) => x >= 1 && x <= material.pageCount),
-      title: p.title,
-      statement: p.statement,
-      points: Math.max(1, p.points),
-      minutes: Math.max(5, p.minutes),
-      solution: p.solution,
-      rubric: p.rubric,
-      createdAt: Date.now(),
-      attempts: [],
-    }));
-    putMany("problem", items);
-    toast(`Added ${items.length} exam problem${items.length === 1 ? "" : "s"} to Exam practice.`);
-    setProblems(null);
   };
 
   return (
@@ -384,87 +318,26 @@ export function AiPanel({ material, page, draft }: { material: Material; page: n
         </label>
       )}
       <div className="row">
-        <button className="btn" disabled={!!busy} onClick={() => gen("cards")}>
+        <button className="btn" disabled={!!busy} onClick={() => generate("cards")}>
           {busy === "cards" ? "Writing cards…" : "Flashcards"}
         </button>
-        <button className="btn" disabled={!!busy} onClick={() => gen("quiz")}>
+        <button className="btn" disabled={!!busy} onClick={() => generate("quiz")}>
           {busy === "quiz" ? "Writing questions…" : "Quiz questions"}
         </button>
-        <button className="btn" disabled={!!busy} onClick={() => gen("problems")}>
+        <button className="btn" disabled={!!busy} onClick={() => generate("problems")}>
           {busy === "problems" ? "Writing exam problems…" : "Exam problems"}
         </button>
       </div>
+      {gen && <GeneratedPreview material={material} gen={gen} onChange={setGen} onDone={() => setGen(null)} />}
 
-      {cards && (
-        <Preview title={plural(cards.length, "flashcard")} onSave={saveCards} onCancel={() => setCards(null)} count={cards.filter((c) => c.keep).length}>
-          {cards.map((c, i) => (
-            <label key={i} className="check card" style={{ padding: 10 }}>
-              <input type="checkbox" checked={c.keep} onChange={() => setCards(cards.map((x, j) => (j === i ? { ...x, keep: !x.keep } : x)))} />
-              <div style={{ minWidth: 0 }}>
-                <Markdown text={c.front} />
-                <Markdown text={c.back} className="small muted" />
-                <span className="tiny muted">
-                  p. {c.page} <TierBadge tier={tierOf(ins, c.page)} />
-                </span>
-              </div>
-            </label>
-          ))}
-        </Preview>
-      )}
-      {quiz && (
-        <Preview title={plural(quiz.length, "question")} onSave={saveQuiz} onCancel={() => setQuiz(null)} count={quiz.filter((q) => q.keep).length}>
-          {quiz.map((q, i) => (
-            <label key={i} className="check card" style={{ padding: 10 }}>
-              <input type="checkbox" checked={q.keep} onChange={() => setQuiz(quiz.map((x, j) => (j === i ? { ...x, keep: !x.keep } : x)))} />
-              <div style={{ minWidth: 0 }}>
-                <span className="pill">{q.type === "truefalse" ? "True / false" : q.type === "multi" ? "Select all" : "Single choice"}</span>
-                <Markdown text={q.question} />
-                <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
-                  {q.options.map((o, k) => (
-                    <li key={k} style={{ color: q.correct.includes(k) ? "var(--good)" : undefined }}>
-                      <Markdown text={o} />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </label>
-          ))}
-        </Preview>
-      )}
-      {problems && (
-        <Preview title={plural(problems.length, "exam problem")} onSave={saveProblems} onCancel={() => setProblems(null)} count={problems.filter((p) => p.keep).length}>
-          {problems.map((p, i) => (
-            <label key={i} className="check card" style={{ padding: 10 }}>
-              <input type="checkbox" checked={p.keep} onChange={() => setProblems(problems.map((x, j) => (j === i ? { ...x, keep: !x.keep } : x)))} />
-              <div style={{ minWidth: 0 }}>
-                <b>{p.title}</b>{" "}
-                <span className="pill">
-                  {p.points} pts · {p.minutes} min
-                </span>
-                <Markdown text={p.statement} className="small" />
-              </div>
-            </label>
-          ))}
-        </Preview>
-      )}
-    </div>
-  );
-}
-
-function Preview({ title, children, onSave, onCancel, count }: { title: string; children: React.ReactNode; onSave: () => void; onCancel: () => void; count: number }) {
-  return (
-    <div className="stack" style={{ gap: 8 }}>
-      <div className="row">
-        <h3 style={{ margin: 0 }}>{title}</h3>
-        <span className="spacer" />
-        <button className="btn sm" onClick={onCancel}>
-          Discard
+      <hr />
+      {bridge ? (
+        <ClaudeBridgePanel material={material} page={page} />
+      ) : (
+        <button className="btn sm ghost" style={{ alignSelf: "flex-start" }} onClick={() => setBridge(true)}>
+          Use the Claude app instead (copy & paste, no API cost)
         </button>
-        <button className="btn sm primary" onClick={onSave} disabled={!count}>
-          Add {count}
-        </button>
-      </div>
-      {children}
+      )}
     </div>
   );
 }

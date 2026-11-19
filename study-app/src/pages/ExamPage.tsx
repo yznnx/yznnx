@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Camera, Eye, GraduationCap, Play, Plus, Trash2 } from "lucide-react";
 import { all, bumpActivity, get, put, remove, update, useStore } from "../lib/store";
 import { aiReady, friendlyError, gradeProblem, type Grade } from "../lib/ai";
+import { buildGradePrompt, parseGrade } from "../lib/bridge";
+import { ClaudeGrader } from "../components/ClaudeBridge";
 import { Empty, ImageThumbs, Markdown, MarkdownEditor, Modal, toast, useImagePicker } from "../components/ui";
 import { pageRanges } from "../lib/planner";
 import { shuffle, uid } from "../lib/util";
@@ -47,8 +49,8 @@ export function ExamPage({ courseId }: { courseId: string }) {
       {!aiReady() && (
         <div className="card" style={{ marginBottom: 14 }}>
           <p className="small" style={{ margin: 0 }}>
-            Exam problems are written and graded by the AI tutor. <a href="#/settings">Add your API key in Settings</a>. Without it you can still add problems from past exams yourself and compare
-            with the model solution.
+            Let Claude write exam problems: open a lecture file → <b>AI tutor</b> tab → "Exam problems". After you hand in, use "Grade strictly with Claude" – this works with your
+            normal Claude subscription (copy & paste). With an <a href="#/settings">API key</a> it happens automatically. You can also add problems from past exams yourself.
           </p>
         </div>
       )}
@@ -150,25 +152,32 @@ function ExamRun({ ids, onExit, courseId }: { ids: string[]; onExit: () => void;
     return `${overtime ? "-" : ""}${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
   };
 
+  const [minutesUsed, setMinutesUsed] = useState(0);
+
+  const saveGrade = (p: Problem, g: Grade, minutes = minutesUsed) => {
+    const w = work[p.id] ?? { text: "", images: [] };
+    setGrades((x) => ({ ...x, [p.id]: g }));
+    const cur = get("problem", p.id);
+    if (cur) {
+      update("problem", p.id, {
+        attempts: [...cur.attempts, { at: Date.now(), answer: w.text, imageCount: w.images.length, score: g.score, maxScore: g.maxScore, feedback: g.feedback, minutes: Math.round(minutes / problems.length) }],
+      });
+    }
+  };
+
   const submit = async () => {
+    const minutes = Math.round((Date.now() - start) / 60_000);
+    setMinutesUsed(minutes);
+    bumpActivity({ minutes }, { courseId, minutes });
     if (!aiReady()) {
       setPhase("done");
       return;
     }
     setPhase("grading");
-    const minutes = Math.round((Date.now() - start) / 60_000);
-    bumpActivity({ minutes }, { courseId, minutes });
     for (const p of problems) {
       const w = work[p.id] ?? { text: "", images: [] };
       try {
-        const g = await gradeProblem(p, { text: w.text, images: w.images });
-        setGrades((x) => ({ ...x, [p.id]: g }));
-        const cur = get("problem", p.id);
-        if (cur) {
-          update("problem", p.id, {
-            attempts: [...cur.attempts, { at: Date.now(), answer: w.text, imageCount: w.images.length, score: g.score, maxScore: g.maxScore, feedback: g.feedback, minutes: Math.round(minutes / problems.length) }],
-          });
-        }
+        saveGrade(p, await gradeProblem(p, { text: w.text, images: w.images }), minutes);
       } catch (e) {
         setGrades((x) => ({ ...x, [p.id]: friendlyError(e) }));
         toast(friendlyError(e), true);
@@ -204,7 +213,7 @@ function ExamRun({ ids, onExit, courseId }: { ids: string[]; onExit: () => void;
         ) : (
           <>
             {phase === "grading" && <span className="pill warn">Grading strictly… {Object.keys(grades).length}/{problems.length}</span>}
-            {phase === "done" && aiReady() && (
+            {phase === "done" && Object.keys(grades).length > 0 && (
               <span className={`pill ${totalScore / totalMax >= 0.8 ? "good" : totalScore / totalMax >= 0.5 ? "warn" : "bad"}`} style={{ fontSize: "1rem" }}>
                 {Math.round(totalScore * 10) / 10}/{totalMax} points ({Math.round((totalScore / totalMax) * 100)}%)
               </span>
@@ -246,6 +255,22 @@ function ExamRun({ ids, onExit, courseId }: { ids: string[]; onExit: () => void;
                   </div>
                 )}
                 {typeof g === "string" && <div className="pill bad">{g}</div>}
+                {phase === "done" && !g && !aiReady() && (
+                  <div style={{ marginTop: 10 }}>
+                    <ClaudeGrader
+                      label="Grade strictly with Claude (no API key)"
+                      hint={work[p.id]?.images.length ? "Also attach the photos of your handwritten pages in the Claude chat." : undefined}
+                      buildPrompt={() => buildGradePrompt(p, work[p.id]?.text ?? "", (work[p.id]?.images.length ?? 0) > 0)}
+                      onImport={(reply) => {
+                        try {
+                          saveGrade(p, parseGrade(reply, p.points));
+                        } catch (e) {
+                          return e instanceof Error ? e.message : String(e);
+                        }
+                      }}
+                    />
+                  </div>
+                )}
                 {phase === "done" && (
                   <div style={{ marginTop: 10 }}>
                     <button className="btn sm" onClick={() => setShowSolution({ ...showSolution, [p.id]: !showSolution[p.id] })}>

@@ -40,8 +40,11 @@ export function TutorPage({ courseId }: { courseId: string }) {
     return (
       <div className="page">
         <h1>AI tutor · {course.name}</h1>
-        <Empty icon="✨" title="The AI tutor is optional">
-          <p>Add your own Anthropic API key in Settings. Material is only sent when you ask the tutor something.</p>
+        <Empty icon="✨" title="Chat with Claude about this lecture">
+          <p>
+            For hard questions with your normal Claude subscription: open any file and use the <b>AI tutor</b> tab (copy & paste, no API key). For a live chat inside the app, add
+            an Anthropic API key in Settings.
+          </p>
           <a className="btn primary" href="#/settings">
             Open Settings
           </a>

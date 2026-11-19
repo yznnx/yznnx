@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6d66f5"/>
+      <stop offset="1" stop-color="#3b2fc9"/>
+    </linearGradient>
+    <linearGradient id="page" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e6e4ff"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <!-- open book -->
+  <path d="M512 352 C 440 300 330 284 236 300 L 236 700 C 330 684 440 700 512 752 Z" fill="url(#page)"/>
+  <path d="M512 352 C 584 300 694 284 788 300 L 788 700 C 694 684 584 700 512 752 Z" fill="url(#page)"/>
+  <path d="M512 352 L 512 752" stroke="#3b2fc9" stroke-width="10" stroke-linecap="round" opacity="0.35"/>
+  <!-- lines of text -->
+  <g stroke="#a7a2f0" stroke-width="18" stroke-linecap="round" fill="none">
+    <path d="M300 395 C 360 388 420 395 462 420"/>
+    <path d="M300 460 C 360 453 420 460 462 485"/>
+    <path d="M300 525 C 360 518 420 525 462 550"/>
+  </g>
+  <!-- check mark -->
+  <circle cx="660" cy="470" r="92" fill="#22c55e"/>
+  <path d="M615 470 L 648 505 L 708 438" fill="none" stroke="#fff" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

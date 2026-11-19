@@ -1,0 +1,8 @@
+{
+  "name": "study-vault",
+  "productName": "Study Vault",
+  "version": "1.0.0",
+  "description": "Private, encrypted study app for lectures and exercises",
+  "main": "main.cjs",
+  "private": true
+}

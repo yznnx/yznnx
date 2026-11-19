@@ -6,11 +6,24 @@ An interactive study app for your lectures and exercises. Upload slides, scripts
 
 ## Start using it
 
+### Mac desktop app (Apple chip, M1–M4)
+
+1. Unzip `Study-Vault-mac-arm64.zip` (Safari does this automatically) and drag **Study Vault** into your **Applications** folder.
+2. The app isn't signed with a paid Apple Developer certificate, so macOS blocks it the first time ("damaged" / "can't be opened"). Open **Terminal** once and run:
+   ```bash
+   xattr -cr "/Applications/Study Vault.app"
+   ```
+   This removes the "downloaded from the internet" flag from this one app.
+3. Double-click Study Vault. Requires macOS 13 or newer. Your data is stored in `~/Library/Application Support/Study Vault`.
+
+To build it yourself: `npm run build:mac` (Intel Macs: `ARCH=x64 npm run build:mac`).
+
+### Browser version (any computer)
+
 1. Download **[`StudyApp.html`](StudyApp.html)** (on GitHub: open the file, then click "Download raw file").
 2. Double-click it. It opens in your browser (Chrome or Edge recommended) and works offline.
-3. Choose a password. Write it down: there is no "forgot password", because nobody but you can decrypt the data.
 
-Always open the same file in the same browser. Your data lives in that browser's storage.
+Either way, choose a password and write it down: there is no "forgot password", because nobody but you can decrypt the data. The desktop app and the browser version keep separate data. To move it, use **Settings → Download backup** in one and **Restore from a backup file** in the other.
 
 ## What it does
 
@@ -28,9 +41,17 @@ Always open the same file in the same browser. Your data lives in that browser's
 | 🔎 **Search** | Full-text search over every page, note, card and exercise. |
 | ⏱️ **Focus timer, streaks, heatmap** | Pomodoro timer per lecture and daily activity tracking. |
 
-## The AI tutor (optional)
+## Hard questions from Claude
 
-Settings → AI tutor → paste your own **Anthropic API key** (create one at console.anthropic.com) → *Test*.
+**With your normal Claude subscription (no API key):** open a file, go to the **AI tutor** tab and choose what Claude should make: hard ETH-style quiz questions, exam problems, flashcards or page ratings. Then:
+
+1. **Copy prompt**. The app writes a strict prompt containing the material, your exercises and past exams, and the exact answer format.
+2. **Open Claude** (the Claude app or claude.ai), paste the prompt, and send it.
+3. Copy Claude's whole answer back into the app and press **Import**. You can check each item before adding it.
+
+The same copy & paste flow grades your answers: "Grade strictly with Claude" in Exam practice, "Check strictly with Claude" in Exercises, and "Rate with Claude" in What's important.
+
+**One-click with an API key (optional):** Settings → Claude → paste your own **Anthropic API key** (create one at console.anthropic.com) → *Test*. Everything then happens inside the app, including explanations, chat and automatic grading. API usage is billed by Anthropic separately from a Claude subscription.
 
 - The key is stored encrypted inside your vault. Requests go directly from the app to Anthropic.
 - Your material is only sent when **you press an AI button**, and only the part that's needed (a page, a range or one file).

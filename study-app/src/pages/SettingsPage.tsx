@@ -12,6 +12,7 @@ export function SettingsPage({ onLock }: { onLock: () => void }) {
   const s = settings();
   const [usage, setUsage] = useState<{ used: number; quota: number } | null>(null);
   const [pwOpen, setPwOpen] = useState(false);
+  const [wipeOpen, setWipeOpen] = useState(false);
   const [testing, setTesting] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const set = (patch: Partial<Settings>) => saveSettings(patch);
@@ -32,7 +33,7 @@ export function SettingsPage({ onLock }: { onLock: () => void }) {
           <ShieldCheck size={20} /> Privacy
         </h2>
         <p className="small muted" style={{ margin: 0 }}>
-          All your files, notes and progress are stored in this browser on this device only, encrypted with AES-256 using a key derived from your password. There is no account,
+          All your files, notes and progress are stored only on this device (inside this app or browser), encrypted with AES-256 using a key derived from your password. There is no account,
           no server and no tracking. Only you can open it. If you enable the AI tutor, the text (or pages) you ask about is sent to Anthropic's API with your own key – nothing else
           ever leaves the device.
         </p>
@@ -121,15 +122,25 @@ export function SettingsPage({ onLock }: { onLock: () => void }) {
       </div>
 
       <div className="card stack">
-        <h2>✨ AI tutor (optional)</h2>
+        <h2>✨ Claude (optional)</h2>
+        <p className="small" style={{ margin: 0 }}>There are two ways to let Claude make hard questions and grade your answers:</p>
+        <ol className="small" style={{ margin: 0, paddingLeft: 20 }}>
+          <li>
+            <b>With your normal Claude subscription – no setup.</b> In any file open the <b>AI tutor</b> tab (or "Rate with Claude", "Check with Claude" in exercises and exam
+            practice). The app writes the prompt, you paste it into the Claude app or claude.ai and paste the answer back.
+          </li>
+          <li>
+            <b>One-click with an API key</b> (below). Everything happens inside the app – explanations, chat, automatic grading. Create a key at console.anthropic.com → API
+            keys; usage is billed by Anthropic separately from a Claude subscription.
+          </li>
+        </ol>
         <p className="small muted" style={{ margin: 0 }}>
-          Uses Claude by Anthropic with <b>your own API key</b> (create one at console.anthropic.com → API keys; you pay Anthropic directly per use). The key is stored encrypted inside
-          your vault. Requests go straight from this app to Anthropic – there is no server in between.
+          The key is stored encrypted inside your vault. Requests go straight from this app to Anthropic – there is no server in between.
         </p>
         <label className="check">
           <input type="checkbox" checked={s.aiEnabled} onChange={(e) => set({ aiEnabled: e.target.checked })} />
           <span>
-            <b>Enable the AI tutor</b>
+            <b>Use my API key for one-click AI</b>
           </span>
         </label>
         <label className="field">
@@ -242,22 +253,51 @@ export function SettingsPage({ onLock }: { onLock: () => void }) {
           <span className="small muted" style={{ flex: 1 }}>
             Delete the vault and all files from this device. Make a backup first if you want to keep anything.
           </span>
+          <button className="btn danger solid" onClick={() => setWipeOpen(true)}>
+            <Trash2 size={15} /> Delete everything
+          </button>
+        </div>
+      </div>
+      {pwOpen && <PasswordDialog onClose={() => setPwOpen(false)} />}
+      {wipeOpen && <WipeDialog onClose={() => setWipeOpen(false)} />}
+    </div>
+  );
+}
+
+function WipeDialog({ onClose }: { onClose: () => void }) {
+  const [text, setText] = useState("");
+  return (
+    <Modal
+      title="Delete everything?"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
           <button
             className="btn danger solid"
+            disabled={text !== "DELETE"}
             onClick={async () => {
-              if (prompt('This deletes EVERYTHING on this device. Type "DELETE" to confirm.') !== "DELETE") return;
               await flushWrites();
               await wipeVault();
               location.hash = "";
               location.reload();
             }}
           >
-            <Trash2 size={15} /> Delete everything
+            Delete everything
           </button>
-        </div>
+        </>
+      }
+    >
+      <div className="stack">
+        <p style={{ margin: 0 }}>This deletes all lectures, files, flashcards and progress on this device. It cannot be undone.</p>
+        <label className="field">
+          Type DELETE to confirm
+          <input className="input" autoFocus value={text} onChange={(e) => setText(e.target.value)} />
+        </label>
       </div>
-      {pwOpen && <PasswordDialog onClose={() => setPwOpen(false)} />}
-    </div>
+    </Modal>
   );
 }
 

@@ -5,7 +5,8 @@ import { STUDY_KINDS, TIER_HINT, TIER_LABEL, tierOf } from "../lib/importance";
 import { applyAiImportance, recomputeInsights, resetToAutoImportance, toggleTopicMastered } from "../lib/library";
 import { aiReady, analyzeImportance, friendlyError } from "../lib/ai";
 import { pageRanges } from "../lib/planner";
-import { Empty, Seg, TierBadge, toast } from "../components/ui";
+import { Empty, Modal, Seg, TierBadge, toast } from "../components/ui";
+import { ClaudeBridgePanel } from "../components/ClaudeBridge";
 import { navigate } from "../lib/router";
 import type { Material, Tier } from "../lib/types";
 
@@ -14,6 +15,7 @@ export function TopicsPage({ courseId }: { courseId: string }) {
   const course = get("course", courseId)!;
   const [filter, setFilter] = useState<"core" | "all">("core");
   const [busy, setBusy] = useState<string | null>(null);
+  const [bridgeFor, setBridgeFor] = useState<Material | null>(null);
   const mats = all("material")
     .filter((m) => m.courseId === courseId && STUDY_KINDS.has(m.kind))
     .sort((a, b) => (a.number ?? 999) - (b.number ?? 999) || a.title.localeCompare(b.title));
@@ -65,7 +67,7 @@ export function TopicsPage({ courseId }: { courseId: string }) {
               Without AI, pages are scored offline: overlap with your <b>exercise sheets ({exercises})</b> and <b>past exams ({exams})</b> counts most, then words like
               Definition/Satz/Theorem/klausurrelevant, formulas and how central a concept is across the lecture. Title, agenda and organisation slides are marked as skip.
               {!exams && " Tip: upload old exams – they are the best predictor of what is tested."}
-              {aiReady() ? " With AI, Claude reads the lecture together with your exercises and exams and rates every page." : " Add an API key in Settings to let the AI rate pages and name the key topics."}
+              {aiReady() ? " With AI, Claude reads the lecture together with your exercises and exams and rates every page." : " You can let Claude rate every page and name the key topics with your normal Claude subscription (\"Rate with Claude\") or with an API key in Settings."}
             </p>
           </div>
           <div className="stack" style={{ gap: 4 }}>
@@ -104,6 +106,11 @@ export function TopicsPage({ courseId }: { courseId: string }) {
               <span className="small muted">
                 {(["core", "important", "optional", "skip"] as Tier[]).map((t) => `${counts[t]} ${TIER_LABEL[t].toLowerCase()}`).join(" · ")}
               </span>
+              {!aiReady() && (
+                <button className="btn sm" onClick={() => setBridgeFor(m)}>
+                  <Sparkles size={14} /> {ins?.source === "ai" ? "Re-rate with Claude" : "Rate with Claude"}
+                </button>
+              )}
               {aiReady() && (
                 <button className="btn sm" disabled={!!busy} onClick={() => runAi([m])}>
                   <Sparkles size={14} /> {busy === m.id ? "Analysing…" : ins?.source === "ai" ? "Re-analyse" : "Analyse with AI"}
@@ -156,6 +163,11 @@ export function TopicsPage({ courseId }: { courseId: string }) {
           </div>
         );
       })}
+      {bridgeFor && (
+        <Modal title={`Rate "${bridgeFor.title}" with Claude`} onClose={() => setBridgeFor(null)} wide>
+          <ClaudeBridgePanel material={bridgeFor} page={1} initialTask="importance" />
+        </Modal>
+      )}
       {mats.length > 0 && (
         <button className="btn sm ghost" onClick={() => recomputeInsights(courseId)}>
           <RotateCcw size={14} /> Recalculate automatic ratings

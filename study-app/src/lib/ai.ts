@@ -39,7 +39,7 @@ function base(effort: Effort) {
   return { model, output_config: { effort }, ...fallback };
 }
 
-function languageRule(): string {
+export function languageRule(): string {
   const l = settings().aiLanguage;
   if (l === "auto") return "Write in the same language as the course material (e.g. German material → German answers).";
   return `Always write in ${l}.`;
@@ -59,7 +59,7 @@ function levelRule(): string {
   return `Calibrate to a typical university exam: test understanding as well as recall.`;
 }
 
-function tutorStyle() {
+export function tutorStyle() {
   return `${TUTOR_STYLE_BASE}\n- ${levelRule()}`;
 }
 
@@ -90,7 +90,7 @@ export interface Scope {
   visual?: boolean;
 }
 
-function textOfPages(materialId: string, pages?: number[]): string {
+export function textOfPages(materialId: string, pages?: number[]): string {
   const t = get("text", materialId);
   if (!t) return "";
   const list = pages ?? t.pages.map((_, i) => i + 1);
@@ -148,7 +148,7 @@ async function materialBlocks(scope: Scope): Promise<BetaContentBlockParam[]> {
   return [{ type: "text", text: `<material title="${label}">\n${textOfPages(m.id, scope.pages)}\n</material>` }];
 }
 
-function kindLabel(kind: Material["kind"]) {
+export function kindLabel(kind: Material["kind"]) {
   return { lecture: "Lecture", exercise: "Exercise sheet", solution: "Solution", exam: "Past exam", notes: "Notes", other: "Material" }[kind];
 }
 
@@ -160,8 +160,7 @@ function bufToB64(buf: ArrayBuffer): string {
 }
 
 /** Text of the course's exercises and past exams – tells the AI what gets tested. */
-function evidenceText(courseId: string, maxChars = 60_000): string {
-
+export function evidenceText(courseId: string, maxChars = 60_000): string {
   const parts: string[] = [];
   for (const m of all("material").filter((x) => x.courseId === courseId && (x.kind === "exam" || x.kind === "exercise"))) {
     const t = get("text", m.id);
@@ -202,7 +201,14 @@ export interface GeneratedCard {
   page: number;
 }
 
-export async function generateCards(scope: Scope, opts: { count: number; focus: "important" | "all"; importantPages?: number[] }): Promise<GeneratedCard[]> {
+export interface CardOpts {
+  count: number;
+  focus: "important" | "all";
+  importantPages?: number[];
+}
+
+/** Instructions shared by the API tutor and the copy & paste bridge. */
+export function cardPrompt(opts: CardOpts) {
   const focus =
     opts.focus === "important" && opts.importantPages?.length
       ? `Concentrate on what is most exam-relevant – especially pages ${opts.importantPages.join(", ")} (rated core/important). Skip organisational content, agendas and trivia.`
@@ -211,18 +217,23 @@ export async function generateCards(scope: Scope, opts: { count: number; focus: 
     settings().examLevel === "eth"
       ? `Make them hard in the ETH sense: exact statements of definitions and theorems including ALL assumptions, "why does X fail without assumption Y?", key proof ideas, derivation steps, counterexamples, how to recognise which method applies, and common traps. Avoid trivial cards.`
       : "";
+  return {
+    system: `${tutorStyle()}\nYou write excellent spaced-repetition flashcards: one idea per card, precise question, short but complete answer (a few lines or a formula with the meaning of each symbol). No true/false cards. ${eth} ${languageRule()}`,
+    ask: `Create about ${opts.count} flashcards from this material. ${focus} Set "page" to the page each card comes from.`,
+  };
+}
+
+export async function generateCards(scope: Scope, opts: CardOpts): Promise<GeneratedCard[]> {
+  const pr = cardPrompt(opts);
   const res = await client()
     .beta.messages.stream({
     ...base("medium"),
     max_tokens: 64000,
-    system: `${tutorStyle()}\nYou write excellent spaced-repetition flashcards: one idea per card, precise question, short but complete answer (a few lines or a formula with the meaning of each symbol). No true/false cards. ${eth} ${languageRule()}`,
+    system: pr.system,
     messages: [
       {
         role: "user",
-        content: [
-          ...(await materialBlocks(scope)),
-          { type: "text", text: `Create about ${opts.count} flashcards from this material. ${focus} Set "page" to the page each card comes from.` },
-        ],
+        content: [...(await materialBlocks(scope)), { type: "text", text: pr.ask }],
       },
     ],
     output_config: { ...base("medium").output_config, format: betaJSONSchemaOutputFormat(cardSchema) },
@@ -269,27 +280,40 @@ export interface GeneratedQuestion {
   page: number;
 }
 
-export async function generateQuiz(scope: Scope, opts: { count: number; importantPages?: number[] }): Promise<GeneratedQuestion[]> {
-  const evidence = evidenceText(scope.material.courseId, 20_000);
+export function quizPrompt(courseId: string, opts: { count: number; importantPages?: number[] }) {
+  const evidence = evidenceText(courseId, 20_000);
   const eth =
     settings().examLevel === "eth"
       ? `Mix the formats like an ETH exam: mostly "truefalse" blocks (4–5 subtle statements each, e.g. about assumptions, limits of theorems, edge cases) and "multi" (select all that apply), some "single". Distractors must be subtle and based on typical misconceptions; statements should require careful reasoning or a short calculation.`
       : `Mostly "single" choice with some "multi" questions. Distractors must be plausible (typical mistakes).`;
+  return {
+    system: `${tutorStyle()}\nYou write exam-style multiple-choice questions that test understanding, not just recall. ${eth} ${languageRule()}`,
+    extra: evidence ? `For calibration, this is how the course tests students:\n${evidence}` : "",
+    ask: `Write ${opts.count} questions about the material.${opts.importantPages?.length ? ` Prioritise pages ${opts.importantPages.join(", ")}.` : ""} Vary which options are correct.`,
+  };
+}
+
+/** Removes invalid indices and questions that can't be scored. */
+export function normalizeQuestions(qs: GeneratedQuestion[]): GeneratedQuestion[] {
+  return qs
+    .map((q) => ({ ...q, correct: Array.from(new Set(q.correct.filter((i) => i >= 0 && i < q.options.length))).sort() }))
+    .filter((q) => q.options.length >= 2 && (q.type !== "single" || q.correct.length === 1));
+}
+
+export async function generateQuiz(scope: Scope, opts: { count: number; importantPages?: number[] }): Promise<GeneratedQuestion[]> {
+  const pr = quizPrompt(scope.material.courseId, opts);
   const res = await client()
     .beta.messages.stream({
     ...base("medium"),
     max_tokens: 64000,
-    system: `${tutorStyle()}\nYou write exam-style multiple-choice questions that test understanding, not just recall. ${eth} ${languageRule()}`,
+    system: pr.system,
     messages: [
       {
         role: "user",
         content: [
           ...(await materialBlocks(scope)),
-          ...(evidence ? [{ type: "text" as const, text: `For calibration, this is how the course tests students:\n${evidence}` }] : []),
-          {
-            type: "text",
-            text: `Write ${opts.count} questions about the material.${opts.importantPages?.length ? ` Prioritise pages ${opts.importantPages.join(", ")}.` : ""} Vary which options are correct.`,
-          },
+          ...(pr.extra ? [{ type: "text" as const, text: pr.extra }] : []),
+          { type: "text", text: pr.ask },
         ],
       },
     ],
@@ -297,9 +321,7 @@ export async function generateQuiz(scope: Scope, opts: { count: number; importan
   })
     .finalMessage();
   checkStop(res.stop_reason);
-  return ((res.parsed_output?.questions ?? []) as GeneratedQuestion[])
-    .map((q) => ({ ...q, correct: Array.from(new Set(q.correct.filter((i) => i >= 0 && i < q.options.length))).sort() }))
-    .filter((q) => q.options.length >= 2 && (q.type !== "single" || q.correct.length === 1));
+  return normalizeQuestions((res.parsed_output?.questions ?? []) as GeneratedQuestion[]);
 }
 
 const problemSchema = {
@@ -338,23 +360,29 @@ export interface GeneratedProblem {
 }
 
 /** Exam problems in the style of the course's past exams. */
+export function problemPrompt(courseId: string, opts: { count: number; importantPages?: number[] }) {
+  const evidence = evidenceText(courseId, 50_000);
+  return {
+    system: `${tutorStyle()}\nYou are an examiner writing a written exam. Problems are self-contained, unambiguous and solvable with the course content in the stated time. Include proofs, derivations, computations and "show that"/"decide and justify" parts. Each problem has sub-parts with points. ${languageRule()}`,
+    extra: evidence ? `Exercises and past exams of this course – match their style and difficulty:\n${evidence}` : "",
+    ask: `Write ${opts.count} exam problem(s) about this material.${opts.importantPages?.length ? ` Focus on the core pages ${opts.importantPages.join(", ")}.` : ""} Give a complete model solution and a strict rubric for each.`,
+  };
+}
+
 export async function generateProblems(scope: Scope, opts: { count: number; importantPages?: number[] }): Promise<GeneratedProblem[]> {
-  const evidence = evidenceText(scope.material.courseId, 50_000);
+  const pr = problemPrompt(scope.material.courseId, opts);
   const res = await client()
     .beta.messages.stream({
     ...base("high"),
     max_tokens: 64000,
-    system: `${tutorStyle()}\nYou are an examiner writing a written exam. Problems are self-contained, unambiguous and solvable with the course content in the stated time. Include proofs, derivations, computations and "show that"/"decide and justify" parts. Each problem has sub-parts with points. ${languageRule()}`,
+    system: pr.system,
     messages: [
       {
         role: "user",
         content: [
           ...(await materialBlocks(scope)),
-          ...(evidence ? [{ type: "text" as const, text: `Exercises and past exams of this course – match their style and difficulty:\n${evidence}` }] : []),
-          {
-            type: "text",
-            text: `Write ${opts.count} exam problem(s) about this material.${opts.importantPages?.length ? ` Focus on the core pages ${opts.importantPages.join(", ")}.` : ""} Give a complete model solution and a strict rubric for each.`,
-          },
+          ...(pr.extra ? [{ type: "text" as const, text: pr.extra }] : []),
+          { type: "text", text: pr.ask },
         ],
       },
     ],
@@ -389,23 +417,31 @@ export interface Grade {
 
 type ImageInput = { data: string; mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif" };
 
+type GradableProblem = { statement: string; points: number; solution: string; rubric: string };
+
+export function gradePrompt(problem: GradableProblem, answer: string, hasImages: boolean) {
+  return {
+    system: `${tutorStyle()}\nYou are an exam corrector. Be exact and consistent with the rubric. ${languageRule()}`,
+    parts: [
+      `<problem points="${problem.points}">\n${problem.statement}\n</problem>`,
+      `<model_solution>\n${problem.solution}\n</model_solution>\n<rubric>\n${problem.rubric}\n</rubric>`,
+      `<student_answer>\n${answer || "(see images)"}\n</student_answer>`,
+    ],
+    ask: `Grade the student answer${hasImages ? " (including the handwritten pages in the images)" : ""} out of ${problem.points} points.${settings().examLevel === "eth" ? " Grade like a strict ETH corrector: points only for steps that are correct AND justified; a correct final result with wrong or missing reasoning earns little; missing assumptions, sign errors and imprecise notation cost points. Never round up out of kindness." : " Grade fairly and consistently with the rubric."}`,
+  };
+}
+
 /** Grades your answer to an exam problem strictly against the rubric. */
-export async function gradeProblem(problem: { statement: string; points: number; solution: string; rubric: string }, attempt: { text: string; images: ImageInput[] }): Promise<Grade> {
-  const content: BetaContentBlockParam[] = [
-    { type: "text", text: `<problem points="${problem.points}">\n${problem.statement}\n</problem>` },
-    { type: "text", text: `<model_solution>\n${problem.solution}\n</model_solution>\n<rubric>\n${problem.rubric}\n</rubric>` },
-    { type: "text", text: `<student_answer>\n${attempt.text || "(see images)"}\n</student_answer>` },
-  ];
+export async function gradeProblem(problem: GradableProblem, attempt: { text: string; images: ImageInput[] }): Promise<Grade> {
+  const pr = gradePrompt(problem, attempt.text, attempt.images.length > 0);
+  const content: BetaContentBlockParam[] = pr.parts.map((text) => ({ type: "text" as const, text }));
   for (const img of attempt.images) content.push({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } });
-  content.push({
-    type: "text",
-    text: `Grade the student answer${attempt.images.length ? " (including the handwritten pages in the images)" : ""} out of ${problem.points} points.${settings().examLevel === "eth" ? " Grade like a strict ETH corrector: points only for steps that are correct AND justified; a correct final result with wrong or missing reasoning earns little; missing assumptions, sign errors and imprecise notation cost points. Never round up out of kindness." : " Grade fairly and consistently with the rubric."}`,
-  });
+  content.push({ type: "text", text: pr.ask });
   const res = await client()
     .beta.messages.stream({
     ...base("high"),
     max_tokens: 64000,
-    system: `${tutorStyle()}\nYou are an exam corrector. Be exact and consistent with the rubric. ${languageRule()}`,
+    system: pr.system,
     messages: [{ role: "user", content }],
     output_config: { ...base("high").output_config, format: betaJSONSchemaOutputFormat(gradeSchema) },
   })
@@ -457,35 +493,34 @@ export interface AiImportance {
   topics: { title: string; importance: "core" | "important" | "optional"; pages: number[]; why: string; keyPoints: string[] }[];
 }
 
-export async function analyzeImportance(material: Material): Promise<AiImportance> {
+export function importancePrompt(material: Material) {
   const evidence = evidenceText(material.courseId);
   const course = get("course", material.courseId);
-  const res = await client()
-    .beta.messages.stream({
-    ...base("medium"),
-    max_tokens: 64000,
+  return {
     system: `${tutorStyle()}\nYou are an expert at exam preparation. You decide what in a lecture is worth studying and what is not, so the student spends time where it pays off. ${languageRule()}`,
-    messages: [
-      {
-        role: "user",
-        content: [
-          ...(await materialBlocks({ material })),
-          {
-            type: "text",
-            text: evidence
-              ? `Exercises and past exams of the course "${course?.name ?? ""}" (strong evidence of what will be tested):\n${evidence}`
-              : `There are no exercise sheets or past exams uploaded yet for "${course?.name ?? ""}" – judge from the lecture itself.`,
-          },
-          {
-            type: "text",
-            text: `Rate EVERY page of the lecture (pages 1–${material.pageCount}):
+    extra: evidence
+      ? `Exercises and past exams of the course "${course?.name ?? ""}" (strong evidence of what will be tested):\n${evidence}`
+      : `There are no exercise sheets or past exams uploaded yet for "${course?.name ?? ""}" – judge from the lecture itself.`,
+    ask: `Rate EVERY page of the lecture (pages 1–${material.pageCount}):
 - core = must know for the exam (definitions, central theorems/methods, anything the exercises/exams test)
 - important = should know, supports core topics
 - optional = background, examples, history, extras
 - skip = title/agenda/organisation/references/empty
 Then list the key topics of this lecture ordered by importance, each with its pages, why it matters and what the student must be able to do.`,
-          },
-        ],
+  };
+}
+
+export async function analyzeImportance(material: Material): Promise<AiImportance> {
+  const pr = importancePrompt(material);
+  const res = await client()
+    .beta.messages.stream({
+    ...base("medium"),
+    max_tokens: 64000,
+    system: pr.system,
+    messages: [
+      {
+        role: "user",
+        content: [...(await materialBlocks({ material })), { type: "text", text: pr.extra }, { type: "text", text: pr.ask }],
       },
     ],
     output_config: { ...base("medium").output_config, format: betaJSONSchemaOutputFormat(importanceSchema) },
@@ -592,15 +627,16 @@ export async function checkSolution(
   blocks.push({ type: "text", text: `Exercise ${task.title}${task.page ? ` (p. ${task.page})` : ""}${task.description ? `: ${task.description}` : ""}` });
   if (attempt.text.trim()) blocks.push({ type: "text", text: `My solution:\n${attempt.text}` });
   for (const img of attempt.images) blocks.push({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } });
+  blocks.push({ type: "text", text: checkInstruction() });
+  return streamText({ system: `${tutorStyle()}\n${languageRule()}`, effort: "high", messages: [{ role: "user", content: blocks }] }, onText);
+}
+
+export function checkInstruction() {
   const strict =
     settings().examLevel === "eth"
       ? "Grade like a strict ETH corrector: every step must be correct AND justified, assumptions must be checked, notation must be precise. A right final answer with gaps in the argument is NOT correct."
       : "Grade like a fair but careful tutor.";
-  blocks.push({
-    type: "text",
-    text: `Check my solution. ${strict} Start with a verdict line: "✅ Correct", "🟡 Partly correct" or "❌ Not correct yet". Then point to the exact first step where something goes wrong or is unjustified and give a hint for fixing it – don't give me the full solution unless I'm completely stuck. End with "Score: x/10".`,
-  });
-  return streamText({ system: `${tutorStyle()}\n${languageRule()}`, effort: "high", messages: [{ role: "user", content: blocks }] }, onText);
+  return `Check my solution. ${strict} Start with a verdict line: "✅ Correct", "🟡 Partly correct" or "❌ Not correct yet". Then point to the exact first step where something goes wrong or is unjustified and give a hint for fixing it – don't give me the full solution unless I'm completely stuck. End with "Score: x/10".`;
 }
 
 /** Quick check that the key works. */
