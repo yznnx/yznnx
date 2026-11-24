@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Lock, ShieldCheck, Upload } from "lucide-react";
-import { createVault, importBackup, unlockVault } from "../lib/vault";
+import { Lock, ShieldCheck, Trash2, Upload } from "lucide-react";
+import { createVault, importBackup, unlockVault, wipeVault } from "../lib/vault";
 import { toast } from "../components/ui";
 
 export function SetupScreen({ onDone }: { onDone: () => void }) {
@@ -59,8 +59,11 @@ export function SetupScreen({ onDone }: { onDone: () => void }) {
 
 export function UnlockScreen({ onUnlock }: { onUnlock: () => void }) {
   const [pw, setPw] = useState("");
+  const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [attempts, setAttempts] = useState(0);
+  const [forgot, setForgot] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,9 +73,21 @@ export function UnlockScreen({ onUnlock }: { onUnlock: () => void }) {
     if (ok) onUnlock();
     else {
       setError("Wrong password.");
+      setAttempts((n) => n + 1);
       setBusy(false);
     }
   };
+
+  if (forgot)
+    return (
+      <ForgotPassword
+        onBack={() => setForgot(false)}
+        onRestored={() => {
+          setForgot(false);
+          onUnlock();
+        }}
+      />
+    );
 
   return (
     <div className="lock">
@@ -80,12 +95,83 @@ export function UnlockScreen({ onUnlock }: { onUnlock: () => void }) {
         <div className="logo">🔒</div>
         <h1>Study Vault is locked</h1>
         <p className="muted">Enter your password to decrypt your lectures.</p>
-        <input className="input" type="password" autoFocus placeholder="Password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="current-password" />
-        {error && <div className="pill bad">{error}</div>}
+        <div className="row nowrap">
+          <input
+            className="input"
+            type={show ? "text" : "password"}
+            autoFocus
+            placeholder="Password"
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            autoComplete="current-password"
+          />
+          <button type="button" className="btn" onClick={() => setShow((v) => !v)}>
+            {show ? "Hide" : "Show"}
+          </button>
+        </div>
+        {error && (
+          <div className="pill bad">
+            {error}
+            {attempts >= 2 ? " Check Caps Lock and the keyboard layout (e.g. Swiss/German: y ↔ z)." : ""}
+          </div>
+        )}
         <button className="btn primary lg" disabled={busy || !pw}>
           <Lock size={16} /> {busy ? "Unlocking…" : "Unlock"}
         </button>
+        <button type="button" className="btn ghost sm" style={{ alignSelf: "center" }} onClick={() => setForgot(true)}>
+          Forgot your password?
+        </button>
       </form>
+    </div>
+  );
+}
+
+function ForgotPassword({ onBack, onRestored }: { onBack: () => void; onRestored: () => void }) {
+  const [confirmText, setConfirmText] = useState("");
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="lock">
+      <div className="lock-box stack">
+        <div className="logo">🔑</div>
+        <h1>Forgot your password?</h1>
+        <p className="small" style={{ margin: 0 }}>
+          Your vault is encrypted with your password and the password is not stored anywhere. That is what keeps it private – but it also means <b>nobody can recover it</b>, not even
+          the developer. Your options:
+        </p>
+        <ol className="small" style={{ margin: 0, paddingLeft: 20 }}>
+          <li>
+            <b>Keep trying.</b> There is no limit on attempts. Try variations, Caps Lock, and other keyboard layouts.
+          </li>
+          <li>
+            <b>Restore a backup</b> (.studyvault file) – it opens with the password you had when you made the backup.
+          </li>
+          <li>
+            <b>Start over:</b> delete this vault and create a new one. Your lectures, flashcards and progress on this device are deleted for good – your original PDFs on your
+            computer are not affected, you can upload them again.
+          </li>
+        </ol>
+        <RestoreLink onDone={onRestored} />
+        <hr style={{ margin: "4px 0" }} />
+        <label className="field">
+          To start over, type DELETE
+          <input className="input" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder="DELETE" />
+        </label>
+        <button
+          className="btn danger solid"
+          disabled={confirmText !== "DELETE" || busy}
+          onClick={async () => {
+            setBusy(true);
+            await wipeVault();
+            location.hash = "";
+            location.reload();
+          }}
+        >
+          <Trash2 size={15} /> Delete vault and start over
+        </button>
+        <button type="button" className="btn ghost" onClick={onBack}>
+          ← Back – I'll try again
+        </button>
+      </div>
     </div>
   );
 }
