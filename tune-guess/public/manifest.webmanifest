@@ -1,0 +1,11 @@
+{
+  "name": "TuneGuess",
+  "short_name": "TuneGuess",
+  "description": "Connect Spotify or Apple Music and guess the songs with your friends.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#120b24",
+  "theme_color": "#120b24",
+  "icons": [{ "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
